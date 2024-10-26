@@ -14,6 +14,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @ApplicationScoped
@@ -21,8 +22,8 @@ public class TokenizerResource {
 
     @Inject
     RepositoryService repositoryService;
-    @Inject
-    ObjectMapper objectMapper;
+
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     public void tokenize(String repositoriesPath) {
         List<Path> repositoriesPathsList = repositoryService.findRepositories(repositoriesPath);
@@ -40,35 +41,41 @@ public class TokenizerResource {
             List<Path> javaFiles = repositoryService.findJavaFilesInRepository(path);
 
             for (Path javaFile : javaFiles) {
-                ObjectNode tokens = tokenizeJavaFile(javaFile.toFile());
-                if (tokens != null) {
-                    saveTokensToFile(outputDir.getPath(), javaFile.getFileName().toString(), tokens);
-                    successCount.incrementAndGet();
-                } else {
-                    failedCount.incrementAndGet();
-                }
-                System.out.printf("\r%d files tokenized | %d files failed",
+                Optional<ObjectNode> tokens = tokenizeJavaFile(javaFile.toFile());
+                tokens.ifPresentOrElse(
+                        token -> {
+                            saveTokensToFile(outputDir.getPath(), javaFile.getFileName().toString(), token);
+                            successCount.incrementAndGet();
+                        },
+                        failedCount::incrementAndGet
+                );
+                System.out.printf("\r%d files tokenized successfully | %d files failed tokenized",
                         successCount.get(), failedCount.get());
             }
         }
+        System.out.println("\nTokenization finished");
     }
 
-    private ObjectNode tokenizeJavaFile(File javaFile) {
+    private Optional<ObjectNode> tokenizeJavaFile(File javaFile) {
         try {
             CompilationUnit compilationUnit = StaticJavaParser.parse(javaFile);
             compilationUnit.getAllContainedComments().forEach(Comment::remove);
 
             ObjectNode result = objectMapper.createObjectNode();
-            compilationUnit.findAll(ClassOrInterfaceDeclaration.class).forEach(clazz -> {
-                ObjectNode classNode = result.putObject(clazz.getNameAsString());
+            compilationUnit.findAll(ClassOrInterfaceDeclaration.class)
+                    .forEach(clazz -> {
+                        List<MethodDeclaration> methods = clazz.findAll(MethodDeclaration.class);
+                        if (!methods.isEmpty()) {
+                            ObjectNode classNode = result.putObject(clazz.getNameAsString());
+                            methods.forEach(method ->
+                                    classNode.put(method.getNameAsString(), tokenizeMethod(method))
+                            );
+                        }
+                    });
 
-                clazz.findAll(MethodDeclaration.class)
-                        .forEach(method -> classNode.put(method.getNameAsString(), tokenizeMethod(method)));
-            });
-
-            return result;
-        } catch (Exception exception) {
-            return null;
+            return Optional.of(result);
+        } catch (Exception ignored) {
+            return Optional.empty();
         }
     }
 

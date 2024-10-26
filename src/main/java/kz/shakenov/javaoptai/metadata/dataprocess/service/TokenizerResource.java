@@ -28,19 +28,17 @@ public class TokenizerResource {
     public void tokenize(String repositoriesPath) {
         List<Path> repositoriesPathsList = repositoryService.findRepositories(repositoriesPath);
         File outputDir = new File("tokens");
-        if (!outputDir.exists()) {
-            if (!outputDir.mkdirs()) {
-                System.err.println("Failed to create directory: " + outputDir.getAbsolutePath());
-            }
+        if (!outputDir.exists() && !outputDir.mkdirs()) {
+            System.err.println("Failed to create directory: " + outputDir.getAbsolutePath());
         }
 
         AtomicInteger successCount = new AtomicInteger(0);
         AtomicInteger failedCount = new AtomicInteger(0);
 
-        for (Path path : repositoriesPathsList) {
+        repositoriesPathsList.parallelStream().forEach(path -> {
             List<Path> javaFiles = repositoryService.findJavaFilesInRepository(path);
 
-            for (Path javaFile : javaFiles) {
+            javaFiles.forEach(javaFile -> {
                 Optional<ObjectNode> tokens = tokenizeJavaFile(javaFile.toFile());
                 tokens.ifPresentOrElse(
                         token -> {
@@ -49,10 +47,12 @@ public class TokenizerResource {
                         },
                         failedCount::incrementAndGet
                 );
-                System.out.printf("\r%d files tokenized successfully | %d files failed tokenized",
+
+                System.out.printf("\r%d files tokenized successfully | %d files failed to tokenize",
                         successCount.get(), failedCount.get());
-            }
-        }
+            });
+        });
+
         System.out.println("\nTokenization finished");
     }
 
